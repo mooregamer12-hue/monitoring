@@ -1,0 +1,87 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>IoT Patient Monitoring – Web App</title>
+<style>
+:root{--bg:#f4f6fa;--card:#fff;--tx:#1b2433;--mut:#64708a;--bd:#d9dfeb;--acc:#2e75b6;--ok:#2e9e5b;--wn:#e08a00;--er:#d03b3b;--grid:#e6eaf2;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1520;--card:#18212f;--tx:#e6ebf5;--mut:#93a0b8;--bd:#2a3649;--acc:#5aa2e6;--ok:#43c077;--wn:#f0a531;--er:#ef5a5a;--grid:#243044}}
+:root[data-theme="dark"]{--bg:#0f1520;--card:#18212f;--tx:#e6ebf5;--mut:#93a0b8;--bd:#2a3649;--acc:#5aa2e6;--ok:#43c077;--wn:#f0a531;--er:#ef5a5a;--grid:#243044}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}*{box-sizing:border-box}
+body{margin:0 auto;background:var(--bg);color:var(--tx);font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:14px;max-width:1200px}
+h1{font-size:19px;margin:0}h2{font-size:14px;margin:0 0 8px}.sub{color:var(--mut);font-size:12px}.ok{color:var(--ok)}.wn{color:var(--wn)}.er{color:var(--er)}
+header{display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;align-items:center;margin-bottom:12px}
+.pill{padding:3px 10px;border-radius:99px;font-size:12px;font-weight:600;border:1px solid var(--bd);background:var(--card)}
+.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:12px}
+.m,.panel,.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:10px}.m b{display:block;font-size:20px}.m span{font-size:11px;color:var(--mut)}
+.layout{display:grid;grid-template-columns:300px 1fr;gap:10px}@media(max-width:820px){.layout{grid-template-columns:1fr}}
+.card{cursor:pointer;margin-bottom:6px}.card.sel{outline:2px solid var(--acc)}.card.bad{border-color:var(--er)}
+.row{display:flex;justify-content:space-between;align-items:center;gap:6px}.v{display:flex;gap:12px;font-size:12px;color:var(--mut);margin-top:3px}.v b{color:var(--tx);font-size:15px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px 10px}label{display:block;font-size:12px;color:var(--mut);margin:4px 0 2px}
+input,select,button{font:inherit;padding:5px 8px;border-radius:6px;border:1px solid var(--bd);background:var(--bg);color:var(--tx);max-width:100%;width:100%}
+button{cursor:pointer;background:var(--acc);color:#fff;border:0;width:auto;margin:6px 6px 0 0}button.g{background:var(--bd);color:var(--tx)}button.d{background:var(--er)}
+canvas{width:100%;height:150px;display:block;margin-bottom:4px}.al{padding:5px 0;border-bottom:1px solid var(--grid);font-size:13px}.note{font-size:11px;color:var(--mut);margin-top:10px}
+</style></head><body>
+<header><div><h1>IoT-Enabled Real-Time Patient Monitoring &amp; Alert System</h1><div class="sub">Web prototype: add patients, enter or simulate vital signs, set thresholds, receive alerts</div></div><div><label style="display:inline;margin-right:6px">Auto-update every</label><select id="int" style="width:auto"><option value="120000" selected>2 min</option><option value="30000">30 s (demo)</option><option value="10000">10 s (demo)</option></select> <span class="pill" id="mode">Storage: …</span></div></header>
+<section class="metrics" id="mt"></section>
+<section class="layout"><div><div class="panel" style="margin-bottom:8px"><h2>Add patient</h2><label>Name / code</label><input id="an" placeholder="e.g. P-11"><div class="grid"><div><label>Phase</label><select id="ap"><option>Intra-op</option><option>Post-op</option></select></div><div><label>Ward / room</label><input id="aw" placeholder="OR-2"></div></div><button id="addb">Add patient</button><button class="g" id="demob">Add 3 demo patients</button></div><div id="list"></div></div>
+<div id="detail"><div class="panel sub">Add or select a patient.</div></div></section>
+<div class="note">Research prototype with manually entered or simulated data. Not a medical device and not for clinical use.</div>
+<script>
+const $=id=>$$(id),$$=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let S={},sel=null,db=null,timers={},INT=120000,tab='main';const TH={hrMin:50,hrMax:120,spMin:92,tMin:35.5,tMax:38};
+const clean=p=>JSON.parse(JSON.stringify(p,(k,v)=>k[0]==='_'?undefined:v));
+function mk(name,ph,ward){const id='p'+Date.now().toString(36)+Math.floor(Math.random()*999);return{id,name,ph,ward,vit:{hr:72,sp:98,tp:36.7},th:{...TH},online:true,live:false,miss:false,offAt:0,act:{},hist:[],alerts:[],rev:1,_pend:true}}
+function setMode(t){$('mode').textContent='Storage: '+t}
+function save(p,now){p.rev=(p.rev||0)+1;clearTimeout(timers[p.id]);timers[p.id]=setTimeout(()=>persist(p),now?0:500)}
+async function persist(p){if(db){try{await db.collection('patients').doc(p.id).set(clean(p));p._pend=false;return}catch(e){db=null;setMode('this browser only (shared database not available)')}}
+ try{localStorage.setItem('patients',JSON.stringify(Object.values(S).map(clean)))}catch(e){}}
+async function init(){try{db=await claude.use('db')}catch(e){db=null}
+ if(db){setMode('shared database (saved online)');db.collection('patients').onSnapshot(snap=>{const ids=new Set();snap.docs.forEach(d=>{const v=d.data();if(!v)return;ids.add(d.id);const l=S[d.id];if(!l||v.rev>l.rev)S[d.id]={...v}});
+  Object.keys(S).forEach(id=>{if(!ids.has(id)&&!S[id]._pend)delete S[id]});if(!sel||!S[sel]){sel=Object.keys(S)[0]||null;form()}render()},()=>{db=null;setMode('this browser only')})}
+ else{setMode('this browser only');try{(JSON.parse(localStorage.getItem('patients')||'[]')).forEach(p=>S[p.id]=p)}catch(e){}sel=Object.keys(S)[0]||null}
+ form();render()}
+function alert_(p,type,msg){p.alerts.unshift({id:Date.now()+Math.random(),t:new Date().toLocaleTimeString(),type,msg,ack:false});if(p.alerts.length>30)p.alerts.pop()}
+let ac;function beep(){try{ac=ac||new(window.AudioContext||window.webkitAudioContext)();const o=ac.createOscillator(),g=ac.createGain();o.frequency.value=880;g.gain.value=.08;o.connect(g);g.connect(ac.destination);o.start();o.stop(ac.currentTime+.25)}catch(e){}}
+function evalTh(p,r,src){[['HR',r.hr,'bpm',p.th.hrMin,p.th.hrMax],['SpO₂',r.sp,'%',p.th.spMin,null],['Temp',r.tp,'°C',p.th.tMin,p.th.tMax]].forEach(([k,v,u,lo,hi])=>{const bad=(lo!=null&&v<lo)||(hi!=null&&v>hi),why=bad?(hi!=null&&v>hi?'above max '+hi:'below min '+lo):'';
+ if(bad&&(!p.act[k]||src==='manual')){p.act[k]=1;alert_(p,'crit',k+' = '+v+' '+u+' ('+why+')');beep()}else if(!bad&&p.act[k]){delete p.act[k];alert_(p,'ok',k+' back in range ('+v+' '+u+')')}})}
+function reading(p,r,src){if(!p.online)return false;p.vit={...r};p.hist.push({t:Date.now(),src:src||'manual',...r});if(p.hist.length>500)p.hist.shift();evalTh(p,r,src||'manual');return true}
+$('addb').onclick=()=>{const n=$('an').value.trim();if(!n)return;const p=mk(n,$('ap').value,$('aw').value.trim());S[p.id]=p;reading(p,{...p.vit},'manual');sel=p.id;$('an').value='';save(p,1);form();render()};
+$('demob').onclick=()=>{[['P-01','Intra-op','OR-1'],['P-02','Intra-op','OR-2'],['P-03','Post-op','Ward 3']].forEach(([n,ph,w],i)=>{const p=mk(n,ph,w);p.vit={hr:68+i*5,sp:97.5,tp:36.6+i*.1};p.live=true;S[p.id]=p;reading(p,{...p.vit},'auto');sel=sel||p.id;save(p,1)});form();render()};
+$('list').onclick=e=>{const c=e.target.closest('.card');if(c){sel=c.dataset.id;form();render()}};
+function form(){const p=S[sel],el=$('detail');if(!p){el.innerHTML='<div class="panel sub">Add or select a patient.</div>';return}
+ el.innerHTML=`<div id="banner"></div><div class="row" style="justify-content:flex-start;margin-bottom:8px"><button id="t1">Overview</button><button id="t2" class="g">History (stored readings)</button></div><div id="tab_main"><div class="panel" style="margin-bottom:10px"><h2>Patient data (editable)</h2><div class="grid"><div><label>Name / code</label><input id="f_n" value="${esc(p.name)}"></div><div><label>Phase</label><select id="f_p"><option${p.ph==='Intra-op'?' selected':''}>Intra-op</option><option${p.ph==='Post-op'?' selected':''}>Post-op</option></select></div><div><label>Ward / room</label><input id="f_w" value="${esc(p.ward||'')}"></div></div>
+ <h2 style="margin-top:10px">Vital signs — enter a reading</h2><div class="grid"><div><label>Heart rate (bpm)</label><input type="number" id="v_hr" value="${p.vit.hr}"></div><div><label>SpO₂ (%)</label><input type="number" step="0.1" id="v_sp" value="${p.vit.sp}"></div><div><label>Temperature (°C)</label><input type="number" step="0.1" id="v_tp" value="${p.vit.tp}"></div></div>
+ <button id="send">Send reading</button><button class="g" id="live"></button><button class="g" id="dev"></button>
+ <h2 style="margin-top:10px">Alert thresholds</h2><div class="grid">${[['hrMin','HR min'],['hrMax','HR max'],['spMin','SpO₂ min'],['tMin','Temp min'],['tMax','Temp max']].map(([k,l])=>`<div><label>${l}</label><input type="number" step="0.1" data-th="${k}" value="${p.th[k]}"></div>`).join('')}</div>
+ <button class="d" id="del">Delete patient</button></div>
+ <div class="panel" style="margin-bottom:10px"><h2>Trends (last readings)</h2><canvas id="c1"></canvas><canvas id="c2"></canvas><canvas id="c3"></canvas></div>
+ <div class="panel"><h2>Alerts</h2><div id="al"></div></div></div><div id="tab_hist" style="display:none"><div class="panel"><h2>Stored readings (newest first, last 100 of up to 500)</h2><div id="ht" style="overflow-x:auto"></div></div></div>`;
+ const g=id=>$(id);g('t1').onclick=()=>{tab='main';tabs()};g('t2').onclick=()=>{tab='hist';tabs()};g('f_n').onchange=e=>{p.name=e.target.value;save(p);render()};g('f_p').onchange=e=>{p.ph=e.target.value;save(p);render()};g('f_w').onchange=e=>{p.ward=e.target.value;save(p);render()};
+ g('send').onclick=()=>{const r={hr:Math.round(+g('v_hr').value),sp:+(+g('v_sp').value).toFixed(1),tp:+(+g('v_tp').value).toFixed(2)};if(!reading(p,r))alert_(p,'warn','Reading rejected: device is offline');save(p);render()};
+ g('live').onclick=()=>{p.live=!p.live;save(p);btns()};g('dev').onclick=()=>{p.online=!p.online;if(!p.online)p.offAt=Date.now();else if(p.miss){p.miss=false;alert_(p,'ok','Data stream restored')}save(p);btns();render()};
+ g('del').onclick=async()=>{delete S[p.id];sel=Object.keys(S)[0]||null;if(db){try{await db.collection('patients').doc(p.id).delete()}catch(e){}}else persist({id:'x'});form();render()};
+ document.querySelectorAll('[data-th]').forEach(i=>i.onchange=e=>{p.th[e.target.dataset.th]=+e.target.value;evalTh(p,p.vit,'auto');save(p);render()});
+ function btns(){g('live').textContent='Auto-simulate: '+(p.live?'ON':'OFF');g('dev').textContent='Device: '+(p.online?'online (click to disconnect)':'OFFLINE (click to reconnect)')}btns();tabs()}
+function tabs(){if(!$('tab_main'))return;$('tab_main').style.display=tab==='main'?'':'none';$('tab_hist').style.display=tab==='hist'?'':'none';$('t1').className=tab==='main'?'':'g';$('t2').className=tab==='hist'?'':'g'}
+function draw(cv,lab,key,lo,hi,mn,mx,p,u){if(!cv)return;const cs=getComputedStyle(document.documentElement),col=n=>cs.getPropertyValue(n).trim(),w=cv.clientWidth,h=cv.clientHeight,d=devicePixelRatio||1;cv.width=w*d;cv.height=h*d;const c=cv.getContext('2d');c.setTransform(d,0,0,d,0,0);
+ const H=p.hist.slice(-40),L=42,R=12,T=22,B=18,pw=w-L-R,ph=h-T-B,tmin=mn?p.th[mn]:null,tmax=mx?p.th[mx]:null;
+ const vals=H.map(r=>r[key]).concat([tmin,tmax].filter(v=>v!=null));let a=Math.min(...vals),b=Math.max(...vals);const ms=(hi-lo)/4;if(!isFinite(a)){a=lo;b=hi}if(b-a<ms){const m=(a+b)/2;a=m-ms/2;b=m+ms/2}const pd=(b-a)*.15;a-=pd;b+=pd;
+ const Y=v=>T+ph-(v-a)/(b-a)*ph,X=i=>L+(H.length>1?i/(H.length-1)*pw:pw/2),bad=v=>(tmin!=null&&v<tmin)||(tmax!=null&&v>tmax);
+ c.font='11px system-ui';c.textBaseline='middle';c.fillStyle=col('--er');c.globalAlpha=.1;if(tmax!=null)c.fillRect(L,T,pw,Math.max(0,Y(tmax)-T));if(tmin!=null)c.fillRect(L,Y(tmin),pw,Math.max(0,T+ph-Y(tmin)));c.globalAlpha=1;
+ c.strokeStyle=col('--grid');c.lineWidth=1;c.fillStyle=col('--mut');c.textAlign='right';for(let i=0;i<=4;i++){const v=a+(b-a)*i/4,y=Y(v);c.beginPath();c.moveTo(L,y);c.lineTo(L+pw,y);c.stroke();c.fillText(v.toFixed(key==='tp'?1:0),L-5,y)}
+ c.setLineDash([6,4]);c.strokeStyle=col('--er');c.fillStyle=col('--er');c.lineWidth=1.3;c.textAlign='right';[[tmin,'min'],[tmax,'max']].forEach(([v,t])=>{if(v!=null){c.beginPath();c.moveTo(L,Y(v));c.lineTo(L+pw,Y(v));c.stroke();c.fillText(t+' '+v,L+pw-2,Y(v)+(t==='max'?-7:7))}});c.setLineDash([]);
+ c.strokeStyle=col('--acc');c.lineWidth=2;c.beginPath();H.forEach((r,i)=>i?c.lineTo(X(i),Y(r[key])):c.moveTo(X(i),Y(r[key])));c.stroke();
+ H.forEach((r,i)=>{c.fillStyle=bad(r[key])?col('--er'):col('--acc');c.beginPath();c.arc(X(i),Y(r[key]),bad(r[key])?5:3,0,7);c.fill()});
+ const last=H[H.length-1];c.textAlign='left';c.fillStyle=col('--tx');c.font='bold 12px system-ui';c.fillText(lab+(last?'  '+last[key]+' '+u:''),L,10);
+ if(last&&bad(last[key])){c.fillStyle=col('--er');c.fillText(tmax!=null&&last[key]>tmax?'  ▲ ABOVE MAX':'  ▼ BELOW MIN',L+150,10)}
+ c.font='10px system-ui';c.fillStyle=col('--mut');if(H.length){c.textAlign='left';c.fillText(new Date(H[0].t).toLocaleTimeString(),L,h-6);c.textAlign='right';c.fillText(new Date(last.t).toLocaleTimeString(),L+pw,h-6)}
+ if(p.miss){c.fillStyle=col('--er');c.font='bold 14px system-ui';c.textAlign='center';c.fillText('NO DATA — watchdog alert',L+pw/2,T+ph/2)}}
+function render(){const L=Object.values(S);const act=L.reduce((a,p)=>a+Object.keys(p.act).length+(p.miss?1:0),0),un=L.reduce((a,p)=>a+p.alerts.filter(x=>x.ack===false&&x.type!=='ok').length,0);
+ $('mt').innerHTML=[['Patients',L.length,''],['Devices online',L.filter(p=>p.online).length+' / '+L.length,L.every(p=>p.online)?'ok':'wn'],['Active alerts',act,act?'er':'ok'],['Unacknowledged',un,un?'wn':'ok']].map(([l,v,c])=>`<div class="m"><span>${l}</span><b class="${c}">${v}</b></div>`).join('');
+ $('list').innerHTML=L.map(p=>{const bad=Object.keys(p.act).length||p.miss,st=p.miss?['er','offline']:p.online?['ok','online']:['wn','disconnecting'];return`<div class="card ${p.id===sel?'sel':''} ${bad?'bad':''}" data-id="${p.id}"><div class="row"><b>${esc(p.name)}</b><span class="${st[0]}" style="font-size:12px">● ${st[1]}</span></div><div class="sub">${esc(p.ph)}${p.ward?' · '+esc(p.ward):''}${p.live?' · auto':''}</div><div class="v"><span>HR <b>${p.vit.hr}</b></span><span>SpO₂ <b>${p.vit.sp}</b></span><span>T <b>${p.vit.tp}</b></span></div>${bad?'<div class="er" style="font-size:12px">⚠ '+(p.miss?'missing data ':'')+Object.keys(p.act).join(', ')+'</div>':''}</div>`}).join('');
+ const p=S[sel];if(!p)return;draw($('c1'),'Heart rate','hr',40,160,'hrMin','hrMax',p,'bpm');draw($('c2'),'SpO₂','sp',80,100,'spMin',null,p,'%');draw($('c3'),'Temperature','tp',35,40,'tMin','tMax',p,'°C');
+ const bn=$('banner');if(bn){const u=p.alerts.filter(x=>x.type==='crit'&&!x.ack).slice(0,3);bn.innerHTML=(u.length||p.miss)?'<div class="panel" style="border-color:var(--er);background:rgba(208,59,59,.12);margin-bottom:8px"><b class="er">⚠ ALERT — '+esc(p.name)+'</b>'+(p.miss?'<div class="er">Missing data: device not sending</div>':'')+u.map(a=>'<div>'+a.t+' · '+esc(a.msg)+'</div>').join('')+'</div>':''}const ht=$('ht');if(ht)ht.innerHTML=p.hist.length?'<table style="width:100%;border-collapse:collapse;font-size:13px"><tr style="text-align:left;color:var(--mut)"><th>Time</th><th>Source</th><th>HR</th><th>SpO₂</th><th>Temp</th></tr>'+p.hist.slice(-100).reverse().map(r=>`<tr style="border-top:1px solid var(--grid)"><td>${new Date(r.t).toLocaleString()}</td><td>${r.src||'manual'}</td><td>${r.hr}</td><td>${r.sp}</td><td>${r.tp}</td></tr>`).join('')+'</table>':'<div class="sub">No readings stored yet.</div>';const al=$('al');if(al)al.innerHTML=p.alerts.length?p.alerts.map(a=>`<div class="al"><span class="sub">${a.t}</span> <b class="${{crit:'er',warn:'wn',ok:'ok'}[a.type]}">${esc(a.msg)}</b> ${a.type!=='ok'&&!a.ack?`<button class="g" data-ack="${a.id}" style="padding:2px 8px;margin:0 0 0 6px">Acknowledge</button>`:a.ack?'<span class="sub">acknowledged</span>':''}</div>`).join(''):'<div class="sub">No alerts yet. Enter an out-of-range reading or disconnect the device.</div>'}
+document.addEventListener('click',e=>{const id=e.target.dataset&&e.target.dataset.ack;if(!id||!S[sel])return;const a=S[sel].alerts.find(x=>String(x.id)===id);if(a){a.ack=true;save(S[sel]);render()}});
+setInterval(()=>{const n=Date.now();Object.values(S).forEach(p=>{
+ if(p.live&&p.online&&(!p._lr||n-p._lr>=INT)){p._lr=n;const v=p.vit,b=(x,t,k,lo,hi)=>Math.min(hi,Math.max(lo,x+(t-x)*.1+(Math.random()-.5)*k));reading(p,{hr:Math.round(b(v.hr,72,3,30,200)),sp:+b(v.sp,97.5,.6,70,100).toFixed(1),tp:+b(v.tp,36.7,.06,34,41).toFixed(2)},'auto');save(p)}
+ if(!p.online&&!p.miss&&n-p.offAt>5000){p.miss=true;alert_(p,'warn','Missing data detected after '+((n-p.offAt)/1000).toFixed(1)+' s without updates');save(p)}});render()},2000);
+$('int').onchange=e=>{INT=+e.target.value};init();
+</script></body></html>
